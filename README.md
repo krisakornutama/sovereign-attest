@@ -119,7 +119,7 @@ Crash safety: a receipt is written before the head pointer. A crash in between l
 ## Limitations (deliberate, milestone 1)
 
 - **One writer per vault.** The vault assumes a single writer; concurrent writers can interleave heads. Multi-writer sequencing is not solved yet.
-- **No revocation list.** A receipt can say `action: 'artifact.revoked'` and it chains, but nothing enforces "do not trust receipts before a revocation".
+- **Revocation is a claim, not an enforcement.** `revoke`/`restore` are signed, chained and covered by the anchor, and `attest.revocation()` derives the current state — but every consumer (the release verifier, an installer, a module loader) must actually refuse revoked artifacts. There is no shared revocation feed across devices yet.
 - **No transparency log.** Anchoring covers _a_ vault root; publishing that anchor to a witness the attacker cannot rewrite is an operator task (the vault anchor log can already point anywhere).
 - **Artifacts are optional payload.** `storeArtifact` keeps bytes in the vault for small artifacts; larger ones stay outside and are referenced by digest.
 - **Rotation must be published.** `attest.rotate()` writes a statement signed by the old key, but a verifier only honours it if you hand the statement over (`provenance(..., { rotations })`, `expandTrust`). Without it, receipts from the new key are rejected as untrusted — that is the intended failure, not a bug.

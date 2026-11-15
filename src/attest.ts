@@ -65,6 +65,16 @@ export interface AnchorReport {
   readonly entry: unknown;
 }
 
+/** Actions that change whether an artifact is still trusted. */
+export const ACTION_REVOKED = 'artifact.revoked';
+export const ACTION_RESTORED = 'artifact.restored';
+
+export interface RevocationState {
+  readonly revoked: boolean;
+  /** The receipt that set the current state, or null when nothing ever changed it. */
+  readonly receipt: Receipt | null;
+}
+
 const PROBE = utf8('sovereign-attest key probe');
 
 function isBytes(value: unknown): value is Uint8Array {
@@ -237,6 +247,57 @@ export class Attest {
     await saveRotation(this.vault, next.keyId, statement);
     this.key = next;
     return statement;
+  }
+
+  /**
+   * Marks an artifact as no longer trusted (compromised build, wrong hash, pulled
+   * release). The receipt chains like any other claim, so the revocation itself is
+   * signed, timestamped and covered by the anchor — and it is visible offline.
+   */
+  async revoke(input: {
+    readonly artifact: ArtifactInput;
+    readonly actor: string;
+    readonly reason: string;
+  }): Promise<Receipt> {
+    return this.record({
+      action: ACTION_REVOKED,
+      actor: input.actor,
+      artifact: input.artifact,
+      meta: { reason: input.reason },
+    });
+  }
+
+  /** Lifts a revocation. Kept separate from `revoke` so the history reads in order. */
+  async restore(input: {
+    readonly artifact: ArtifactInput;
+    readonly actor: string;
+    readonly reason?: string;
+  }): Promise<Receipt> {
+    return this.record({
+      action: ACTION_RESTORED,
+      actor: input.actor,
+      artifact: input.artifact,
+      ...(input.reason === undefined ? {} : { meta: { reason: input.reason } }),
+    });
+  }
+
+  /**
+   * Current trust state of an artifact, derived from its verified chain. The newest
+   * revocation or restore wins; everything older is history, not state.
+   */
+  async revocation(
+    subject: string,
+    options: Parameters<Attest['provenance']>[1] = {}
+  ): Promise<RevocationState> {
+    const { receipts } = await this.provenance(subject, options);
+    let decisive: Receipt | undefined;
+    for (const receipt of receipts) {
+      if (receipt.body.action === ACTION_REVOKED || receipt.body.action === ACTION_RESTORED) {
+        decisive = receipt;
+      }
+    }
+    if (!decisive) return { revoked: false, receipt: null };
+    return { revoked: decisive.body.action === ACTION_REVOKED, receipt: decisive };
   }
 
   /**
