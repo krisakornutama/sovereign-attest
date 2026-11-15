@@ -19,13 +19,16 @@ import {
   artifactPath,
   loadHead,
   loadReceipt,
+  loadRotation,
   loadSigningKey,
   saveHead,
   saveReceipt,
+  saveRotation,
   saveSigningKey,
   type AnchorLogLike,
   type AttestVault,
 } from './store.js';
+import { expandTrust, openRotation, sealRotation, type RotationStatement } from './rotation.js';
 
 export interface AttestOptions {
   /** Anything that behaves like `sovereign-vault`'s `Vault`. */
@@ -77,19 +80,23 @@ function isBytes(value: unknown): value is Uint8Array {
  * exactly what keeps {@link Vault.pruneOrphans} from ever deleting it.
  */
 export class Attest {
-  readonly keyId: string;
-  readonly publicKey: string;
-
   private readonly vault: AttestVault;
-  private readonly key: SigningKey;
+  private key: SigningKey;
   private readonly clock: () => number;
 
   private constructor(options: { vault: AttestVault; key: SigningKey; clock: () => number }) {
     this.vault = options.vault;
     this.key = options.key;
     this.clock = options.clock;
-    this.keyId = options.key.keyId;
-    this.publicKey = options.key.publicKey;
+  }
+
+  /** Label of the key currently used to sign. */
+  get keyId(): string {
+    return this.key.keyId;
+  }
+
+  get publicKey(): string {
+    return this.key.publicKey;
   }
 
   /**
@@ -169,10 +176,16 @@ export class Attest {
    */
   async provenance(
     subject: string,
-    options: { readonly trustedKeys?: Readonly<Record<string, string>> } = {}
+    options: {
+      readonly trustedKeys?: Readonly<Record<string, string>>;
+      /** Statements that bridge key changes; without them a new key looks like an intruder. */
+      readonly rotations?: readonly RotationStatement[];
+    } = {}
   ): Promise<ProvenanceReport> {
     const trust: ReceiptTrust = {
-      trustedKeys: options.trustedKeys ?? this.trustedKeys(),
+      trustedKeys: options.rotations?.length
+        ? expandTrust(options.trustedKeys ?? this.trustedKeys(), options.rotations)
+        : (options.trustedKeys ?? this.trustedKeys()),
     };
     const head = await loadHead(this.vault, subject);
     const chain: Receipt[] = [];
@@ -204,6 +217,44 @@ export class Attest {
       receipts: chain.reverse(),
       head: head,
     };
+  }
+
+  /**
+   * Rotates signing to `nextKeyId`: creates the key if needed, then signs a statement
+   * with the current key endorsing it. Callers must publish the returned statement —
+   * without it, verifiers correctly treat receipts from the new key as untrusted.
+   */
+  async rotate(nextKeyId: string, at: number = this.clock()): Promise<RotationStatement> {
+    if (nextKeyId === this.key.keyId) {
+      throw new AttestError('invalid-key', `already signing with "${nextKeyId}"`);
+    }
+    let next = await loadSigningKey(this.vault, nextKeyId);
+    if (!next) {
+      next = createSigningKey(nextKeyId, at);
+      await saveSigningKey(this.vault, next);
+    }
+    const statement = sealRotation(this.key, next, at);
+    await saveRotation(this.vault, next.keyId, statement);
+    this.key = next;
+    return statement;
+  }
+
+  /**
+   * Loads the stored statement for `keyId` and checks its signature.
+   * Trust is the caller's decision: pass `endorserPublicKey` (a key pinned out of band)
+   * to also prove the statement came from that key rather than only being well formed.
+   */
+  async rotationTo(keyId: string, endorserPublicKey?: string): Promise<RotationStatement> {
+    const stored = await loadRotation(this.vault, keyId);
+    if (!stored) {
+      throw new AttestError('unknown-key', `no rotation statement stored for "${keyId}"`);
+    }
+    const endorser =
+      endorserPublicKey ?? (stored as { from?: { publicKey?: string } }).from?.publicKey;
+    if (!endorser) {
+      throw new AttestError('invalid-key', `rotation statement for "${keyId}" has no endorser`);
+    }
+    return openRotation(stored, endorser);
   }
 
   /** Verifies a single receipt the way this writer would verify its own. */

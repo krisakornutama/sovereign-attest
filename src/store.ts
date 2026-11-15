@@ -28,6 +28,7 @@ export const KEY_PREFIX = 'attest/keys/';
 export const RECEIPT_PREFIX = 'attest/receipts/';
 export const HEAD_PREFIX = 'attest/heads/';
 export const ARTIFACT_PREFIX = 'attest/artifacts/';
+export const ROTATION_PREFIX = 'attest/rotations/';
 
 const KEY_SUFFIX = '.json';
 
@@ -47,6 +48,10 @@ export function headPath(subject: string): string {
     throw new AttestError('invalid-subject', 'head path needs a hex artifact digest');
   }
   return `${HEAD_PREFIX}${subject}.json`;
+}
+
+export function rotationPath(keyId: string): string {
+  return `${ROTATION_PREFIX}${assertKeyId(keyId)}.json`;
 }
 
 export function artifactPath(sha256: string): string {
@@ -143,4 +148,18 @@ export async function loadHead(vault: AttestVault, subject: string): Promise<str
 
 export async function saveHead(vault: AttestVault, subject: string, id: string): Promise<void> {
   await vault.put(headPath(subject), utf8(JSON.stringify({ head: id })));
+}
+
+export async function loadRotation(vault: AttestVault, keyId: string): Promise<unknown | null> {
+  const path = rotationPath(keyId);
+  const bytes = await readOptional(vault, path);
+  return bytes ? parseJson(bytes, path) : null;
+}
+
+export async function saveRotation(
+  vault: AttestVault,
+  keyId: string,
+  statement: unknown
+): Promise<void> {
+  await vault.put(rotationPath(keyId), utf8(JSON.stringify(statement)));
 }

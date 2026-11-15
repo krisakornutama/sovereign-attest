@@ -14,6 +14,14 @@ export type { SigningKey } from './keys.js';
 export { openReceipt, receiptId, sealReceipt, assertSha256 } from './receipt.js';
 export type { ArtifactRef, Receipt, ReceiptBody, ReceiptTrust } from './receipt.js';
 export { Attest, idOf, signedBy } from './attest.js';
+export {
+  ROTATION_VERSION,
+  expandTrust,
+  openRotation,
+  rotationPayload,
+  sealRotation,
+} from './rotation.js';
+export type { KeyRef, RotationStatement } from './rotation.js';
 export type {
   AnchorReport,
   ArtifactInput,
@@ -26,15 +34,19 @@ export {
   HEAD_PREFIX,
   KEY_PREFIX,
   RECEIPT_PREFIX,
+  ROTATION_PREFIX,
   artifactPath,
   headPath,
   keyPath,
   loadHead,
   loadReceipt,
+  loadRotation,
   loadSigningKey,
   receiptPath,
+  rotationPath,
   saveHead,
   saveReceipt,
+  saveRotation,
   saveSigningKey,
 } from './store.js';
 export type { AnchorLogLike, AttestVault } from './store.js';

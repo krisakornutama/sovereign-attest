@@ -75,16 +75,35 @@ const body = openReceipt(receiptFromARegistry, { publicKey: pinnedReleaseKey });
 
 ## API
 
-| Export                                                              | What it does                                                                                                 |
-| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `Attest.open({ vault, keyId?, now? })`                              | Loads the signing key from the vault or creates and stores it; validates an existing key before use          |
-| `attest.record({ action, actor, artifact, meta?, storeArtifact? })` | Signs a claim, chains it to the artifact's previous receipt and stores both receipt and head in the vault    |
-| `attest.provenance(sha256, { trustedKeys? })`                       | Walks and verifies the chain, oldest first                                                                   |
-| `attest.verify(receipt)`                                            | Verifies one receipt against this writer's key                                                               |
-| `attest.anchor(log)` / `attest.checkAnchor(log, expectedRoot?)`     | Anchors the vault root (which covers keys, receipts and heads) into an append-only log, and detects rollback |
-| `openReceipt(receipt, trust)`                                       | Standalone verification with `{ publicKey }` or `{ trustedKeys }`                                            |
-| `sealReceipt(key, body)` / `receiptId(body)`                        | Sign and predict ids without a vault                                                                         |
-| `createSigningKey(keyId)`                                           | Ed25519 pair for cases where the vault is not in the loop                                                    |
+| Export                                                                 | What it does                                                                                                 |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `Attest.open({ vault, keyId?, now? })`                                 | Loads the signing key from the vault or creates and stores it; validates an existing key before use          |
+| `attest.record({ action, actor, artifact, meta?, storeArtifact? })`    | Signs a claim, chains it to the artifact's previous receipt and stores both receipt and head in the vault    |
+| `attest.provenance(sha256, { trustedKeys? })`                          | Walks and verifies the chain, oldest first                                                                   |
+| `attest.verify(receipt)`                                               | Verifies one receipt against this writer's key                                                               |
+| `attest.rotate(nextKeyId)`                                             | Creates the next key and signs a statement in which the current key endorses it                              |
+| `attest.rotationTo(keyId, endorser?)`                                  | Loads and checks a stored rotation statement, optionally pinning the endorser                                |
+| `expandTrust(trustedKeys, rotations)` / `openRotation(stmt, endorser)` | Prove a key change offline before trusting receipts signed by the new key                                    |
+| `attest.anchor(log)` / `attest.checkAnchor(log, expectedRoot?)`        | Anchors the vault root (which covers keys, receipts and heads) into an append-only log, and detects rollback |
+| `openReceipt(receipt, trust)`                                          | Standalone verification with `{ publicKey }` or `{ trustedKeys }`                                            |
+| `sealReceipt(key, body)` / `receiptId(body)`                           | Sign and predict ids without a vault                                                                         |
+| `createSigningKey(keyId)`                                              | Ed25519 pair for cases where the vault is not in the loop                                                    |
+
+## Key rotation
+
+```ts
+const statement = await attest.rotate('release-2027'); // old key endorses the new one
+// publish `statement` next to your receipts
+
+await attest.provenance(digest, {
+  trustedKeys: { release: oldPublicKey },
+  rotations: [statement],
+});
+```
+
+A verifier that pins only the old key still accepts receipts signed by the new key — but only
+when the chain of endorsements starts at a key it pinned. A rogue key cannot bootstrap itself:
+`expandTrust` refuses any statement not endorsed by an already-trusted key.
 
 ## Why the key lives in the vault
 
@@ -103,7 +122,7 @@ Crash safety: a receipt is written before the head pointer. A crash in between l
 - **No revocation list.** A receipt can say `action: 'artifact.revoked'` and it chains, but nothing enforces "do not trust receipts before a revocation".
 - **No transparency log.** Anchoring covers _a_ vault root; publishing that anchor to a witness the attacker cannot rewrite is an operator task (the vault anchor log can already point anywhere).
 - **Artifacts are optional payload.** `storeArtifact` keeps bytes in the vault for small artifacts; larger ones stay outside and are referenced by digest.
-- **No key rotation ceremony.** Open with a new `keyId` and both keys are trusted (`trustedKeys`), but there is no signed rotation statement yet.
+- **Rotation must be published.** `attest.rotate()` writes a statement signed by the old key, but a verifier only honours it if you hand the statement over (`provenance(..., { rotations })`, `expandTrust`). Without it, receipts from the new key are rejected as untrusted — that is the intended failure, not a bug.
 
 ## Scripts
 
