@@ -47,7 +47,7 @@ export interface RecordInput {
   readonly action: string;
   readonly actor: string;
   readonly artifact: ArtifactInput;
-  readonly meta?: Readonly<Record<string, string>>;
+  readonly meta?: Readonly<Record<string, string | number>>;
   /** Store the artifact bytes in the vault (content-addressed) alongside the claim. */
   readonly storeArtifact?: boolean;
 }
@@ -73,6 +73,20 @@ export interface RevocationState {
   readonly revoked: boolean;
   /** The receipt that set the current state, or null when nothing ever changed it. */
   readonly receipt: Receipt | null;
+  /**
+   * Effective date of the revocation (ms), or null when not revoked. A revocation with
+   * an effective date condemns receipts at or before it — usually `at` of the revocation
+   * itself, but it can be set earlier to cover a window found later ("bad since the 3rd").
+   */
+  readonly revokedAt: number | null;
+}
+
+/**
+ * Does the state condemn a receipt signed at `at`? Only a live revocation with an
+ * effective date does: anything signed after that date is a rebuild, not the revoked build.
+ */
+export function revocationCovers(state: RevocationState, at: number): boolean {
+  return state.revoked && state.revokedAt !== null && at <= state.revokedAt;
 }
 
 const PROBE = utf8('sovereign-attest key probe');
@@ -258,12 +272,22 @@ export class Attest {
     readonly artifact: ArtifactInput;
     readonly actor: string;
     readonly reason: string;
+    /** When the revocation takes effect (ms). Defaults to the revocation's own time. */
+    readonly revokedAt?: number;
   }): Promise<Receipt> {
+    if (input.revokedAt !== undefined) {
+      if (!Number.isInteger(input.revokedAt) || input.revokedAt <= 0) {
+        throw new AttestError('invalid-receipt', 'revokedAt must be a positive integer (ms)');
+      }
+    }
     return this.record({
       action: ACTION_REVOKED,
       actor: input.actor,
       artifact: input.artifact,
-      meta: { reason: input.reason },
+      meta: {
+        reason: input.reason,
+        ...(input.revokedAt === undefined ? {} : { revokedAt: input.revokedAt }),
+      },
     });
   }
 
@@ -296,8 +320,18 @@ export class Attest {
         decisive = receipt;
       }
     }
-    if (!decisive) return { revoked: false, receipt: null };
-    return { revoked: decisive.body.action === ACTION_REVOKED, receipt: decisive };
+    if (!decisive) return { revoked: false, receipt: null, revokedAt: null };
+    if (decisive.body.action !== ACTION_REVOKED) {
+      return { revoked: false, receipt: decisive, revokedAt: null };
+    }
+    const meta = decisive.body.meta;
+    const declared = meta && typeof meta === 'object' ? meta.revokedAt : undefined;
+    return {
+      revoked: true,
+      receipt: decisive,
+      // ไม่ระบุวันที่มีผล ⇒ มีผลทันทีที่เพิกถอน (รอบที่แคบที่สุด)
+      revokedAt: typeof declared === 'number' ? declared : decisive.body.at,
+    };
   }
 
   /**

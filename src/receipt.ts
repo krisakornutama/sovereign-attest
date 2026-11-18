@@ -24,7 +24,7 @@ export interface ReceiptBody {
   readonly at: number;
   /** Receipt id of the previous claim about this artifact, or null for the first. */
   readonly prev: string | null;
-  readonly meta?: Readonly<Record<string, string>>;
+  readonly meta?: Readonly<Record<string, string | number>>;
 }
 
 /** Body plus the signature and the key that can check it, self-contained for offline audit. */
@@ -60,15 +60,22 @@ export function assertSha256(value: unknown, field = 'artifact.sha256'): string 
   return value;
 }
 
-function normaliseMeta(meta: unknown): Record<string, string> | undefined {
+function normaliseMeta(meta: unknown): Record<string, string | number> | undefined {
   if (meta === undefined) return undefined;
   if (typeof meta !== 'object' || meta === null || Array.isArray(meta)) {
-    throw new AttestError('invalid-receipt', 'receipt meta must be an object of strings');
+    throw new AttestError(
+      'invalid-receipt',
+      'receipt meta must be an object of strings or numbers'
+    );
   }
-  const out: Record<string, string> = {};
+  const out: Record<string, string | number> = {};
   for (const [key, value] of Object.entries(meta as Record<string, unknown>)) {
-    if (typeof value !== 'string') {
-      throw new AttestError('invalid-receipt', `receipt meta.${key} must be a string`);
+    // ตัวเลขมีไว้เก็บเวลาที่มีผล (เช่น revokedAt) — canonical รองรับ number อยู่แล้ว
+    if (typeof value !== 'string' && !(typeof value === 'number' && Number.isFinite(value))) {
+      throw new AttestError(
+        'invalid-receipt',
+        `receipt meta.${key} must be a string or a finite number`
+      );
     }
     if (key.length === 0 || key.length > 64) {
       throw new AttestError('invalid-receipt', 'receipt meta keys must be 1-64 characters');
@@ -85,7 +92,7 @@ export function normaliseBody(input: {
   readonly artifact: ArtifactRef;
   readonly at: number;
   readonly prev?: string | null;
-  readonly meta?: Readonly<Record<string, string>>;
+  readonly meta?: Readonly<Record<string, string | number>>;
 }): ReceiptBody {
   // Callers can hand us untrusted JSON, so the type is narrower than reality.
   const artifact = input.artifact as ArtifactRef | null | undefined;

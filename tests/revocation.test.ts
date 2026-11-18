@@ -5,6 +5,7 @@ import {
   ACTION_REVOKED,
   Attest,
   createSigningKey,
+  revocationCovers,
   sha256Hex,
   utf8,
 } from '../src/index.js';
@@ -28,7 +29,11 @@ describe('revocation', () => {
   it('artifact ที่ยังไม่ถูกเพิกถอนรายงานว่าไม่ revoked', async () => {
     const attest = await openAttest();
     await attest.record({ action: 'artifact.shipped', actor: 'release-bot', artifact: artifact() });
-    expect(await attest.revocation(DIGEST)).toEqual({ revoked: false, receipt: null });
+    expect(await attest.revocation(DIGEST)).toEqual({
+      revoked: false,
+      receipt: null,
+      revokedAt: null,
+    });
   });
 
   it('revoke ต่อจาก shipped แล้วสถานะเปลี่ยน พร้อมเหตุผลที่เซ็นไว้', async () => {
@@ -81,5 +86,72 @@ describe('revocation', () => {
     await expect(
       attest.revocation(DIGEST, { trustedKeys: { release: createSigningKey('release').publicKey } })
     ).rejects.toBeInstanceOf(Error);
+  });
+});
+
+describe('revokedAt (วันที่มีผลของการเพิกถอน)', () => {
+  it('ระบุ revokedAt ย้อนหลังได้ และสถานะรายงานค่านั้น', async () => {
+    const attest = await openAttest();
+    await attest.record({ action: 'artifact.shipped', actor: 'release-bot', artifact: artifact() });
+    const revoked = await attest.revoke({
+      artifact: artifact(),
+      actor: 'security',
+      reason: 'บิลด์นี้ถูกแก้ตั้งแต่ต้นเดือน',
+      revokedAt: 1_600_000_000_000,
+    });
+    expect(revoked.body.meta?.revokedAt).toBe(1_600_000_000_000);
+    const state = await attest.revocation(DIGEST);
+    expect(state.revoked).toBe(true);
+    expect(state.revokedAt).toBe(1_600_000_000_000);
+  });
+
+  it('ไม่ระบุ revokedAt ⇒ มีผล ณ เวลาที่เพิกถอน (ไม่ย้อนหลัง)', async () => {
+    const attest = await openAttest();
+    await attest.record({ action: 'artifact.shipped', actor: 'release-bot', artifact: artifact() });
+    const revoked = await attest.revoke({ artifact: artifact(), actor: 'security', reason: 'x' });
+    const state = await attest.revocation(DIGEST);
+    expect(state.revokedAt).toBe(revoked.body.at);
+  });
+
+  it('revocationCovers ตัดสินตามวันที่มีผล: ก่อน/เท่ากับ = ถูกเพิกถอน, หลัง = บิลด์ใหม่', async () => {
+    const attest = await openAttest();
+    await attest.revoke({
+      artifact: artifact(),
+      actor: 'security',
+      reason: 'x',
+      revokedAt: 1_700_000_500_000,
+    });
+    const state = await attest.revocation(DIGEST);
+    expect(revocationCovers(state, 1_700_000_400_000)).toBe(true);
+    expect(revocationCovers(state, 1_700_000_500_000)).toBe(true);
+    expect(revocationCovers(state, 1_700_000_500_001)).toBe(false);
+  });
+
+  it('restore ล้างวันที่มีผล ⇒ ไม่ครอบ receipt ใดอีก', async () => {
+    const attest = await openAttest();
+    await attest.revoke({
+      artifact: artifact(),
+      actor: 'security',
+      reason: 'x',
+      revokedAt: 1_700_000_500_000,
+    });
+    await attest.restore({ artifact: artifact(), actor: 'owner' });
+    const state = await attest.revocation(DIGEST);
+    expect(state.revokedAt).toBeNull();
+    expect(revocationCovers(state, 1_700_000_000_000)).toBe(false);
+  });
+
+  it('revokedAt ที่ไม่ใช่เวลาจำนวนเต็มบวกถูกปฏิเสธ (ไม่เขียน receipt)', async () => {
+    const attest = await openAttest();
+    for (const bad of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expect(
+        attest.revoke({ artifact: artifact(), actor: 'security', reason: 'x', revokedAt: bad })
+      ).rejects.toBeInstanceOf(Error);
+    }
+    expect(await attest.revocation(DIGEST)).toEqual({
+      revoked: false,
+      receipt: null,
+      revokedAt: null,
+    });
   });
 });

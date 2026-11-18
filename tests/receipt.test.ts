@@ -57,8 +57,12 @@ describe('sealReceipt', () => {
     expect(() => makeReceipt({ at: 1.5 })).toThrow(/non-negative integer/);
     expect(() => makeReceipt({ prev: 'abc' })).toThrow(/prev/);
     expect(() => makeReceipt({ meta: { '': 'v' } })).toThrow(/meta keys/);
-    expect(() => makeReceipt({ meta: { k: 1 as unknown as string } })).toThrow(/meta.k/);
-    expect(() => makeReceipt({ meta: 'x' as unknown as Record<string, string> })).toThrow(/object/);
+    expect(() => makeReceipt({ meta: { k: 1 } })).not.toThrow();
+    expect(() => makeReceipt({ meta: { k: true as unknown as string } })).toThrow(/meta.k/);
+    expect(() => makeReceipt({ meta: { k: Number.NaN } })).toThrow(/meta.k/);
+    expect(() => makeReceipt({ meta: 'x' as unknown as Record<string, string | number> })).toThrow(
+      /object/
+    );
     expect(() =>
       makeReceipt({ artifact: null as unknown as { name: string; sha256: string } })
     ).toThrow(/artifact is required/);

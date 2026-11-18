@@ -13,7 +13,14 @@ export {
 export type { SigningKey } from './keys.js';
 export { openReceipt, receiptId, sealReceipt, assertSha256 } from './receipt.js';
 export type { ArtifactRef, Receipt, ReceiptBody, ReceiptTrust } from './receipt.js';
-export { ACTION_RESTORED, ACTION_REVOKED, Attest, idOf, signedBy } from './attest.js';
+export {
+  ACTION_RESTORED,
+  ACTION_REVOKED,
+  Attest,
+  idOf,
+  revocationCovers,
+  signedBy,
+} from './attest.js';
 export {
   ROTATION_VERSION,
   expandTrust,
